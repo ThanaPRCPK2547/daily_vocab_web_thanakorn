@@ -1,9 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { words } from '@/data/words';
 import { Word, Difficulty } from '@/types';
-import { scoreSentence } from '@/lib/scoring';
 
 export default function Home() {
     const [currentWord, setCurrentWord] = useState<Word | null>(null);
@@ -11,6 +9,8 @@ export default function Home() {
     const [score, setScore] = useState<number>(0);
     const [feedbackColor, setFeedbackColor] = useState<string>('text-gray-700');
     const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
+    const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+    const [error, setError] = useState<string | null>(null);
 
     const getRandomWord = useCallback(async() => {
         const response = await fetch("/api/word");
@@ -30,6 +30,7 @@ export default function Home() {
 
     const handleSentenceChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setSentence(e.target.value);
+        setError(null);
         // Reset score and feedback if user starts typing again after submission
         if (isSubmitted) {
             setScore(0);
@@ -38,9 +39,32 @@ export default function Home() {
         }
     };
 
-    const handleSubmitSentence = () => {
-        if (currentWord) {
-            const newScore = scoreSentence(currentWord.word, sentence);
+    const handleSubmitSentence = async () => {
+        if (!currentWord || !sentence.trim()) {
+            return;
+        }
+
+        setIsSubmitting(true);
+        setError(null);
+
+        try {
+            const response = await fetch("/api/score", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    word: currentWord.word,
+                    sentence,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error("Failed to validate sentence");
+            }
+
+            const data = await response.json();
+            const newScore = typeof data.score === "number" ? data.score : 0;
             setScore(newScore);
 
             if (newScore >= 8.0) {
@@ -54,17 +78,23 @@ export default function Home() {
             const history = JSON.parse(localStorage.getItem('wordHistory') || '[]');
             history.push({
                 word: currentWord.word,
-                sentence: sentence,
+                sentence,
                 score: newScore,
                 difficulty: currentWord.difficulty,
                 timestamp: new Date().toISOString(),
             });
             localStorage.setItem('wordHistory', JSON.stringify(history));
             setIsSubmitted(true);
+        } catch (err) {
+            console.error(err);
+            setError("ไม่สามารถส่งประโยคไปตรวจได้ กรุณาลองใหม่อีกครั้ง");
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
     const handleNextWord = () => {
+        setError(null);
         getRandomWord();
     };
 
@@ -108,8 +138,14 @@ export default function Home() {
                         value={sentence}
                         onChange={handleSentenceChange}
                         disabled={isSubmitted}
-                    ></textarea>
+                        ></textarea>
                 </div>
+
+                {error && (
+                    <p className="text-sm text-danger mb-4" role="alert">
+                        {error}
+                    </p>
+                )}
 
                 <div className="flex flex-col sm:flex-row justify-between items-center mb-6 space-y-4 sm:space-y-0">
                     <p className="text-2xl font-bold">Score: <span className={`${feedbackColor} transition-colors duration-300`}>{score.toFixed(1)}</span></p>
@@ -117,10 +153,10 @@ export default function Home() {
                         {!isSubmitted ? (
                             <button
                                 onClick={handleSubmitSentence}
-                                className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-secondary transition duration-200 ease-in-out font-medium shadow-md"
-                                disabled={!sentence.trim()}
+                                className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-secondary transition duration-200 ease-in-out font-medium shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
+                                disabled={!sentence.trim() || isSubmitting}
                             >
-                                Submit Sentence
+                                {isSubmitting ? 'Scoring...' : 'Submit Sentence'}
                             </button>
                         ) : (
                             <button
